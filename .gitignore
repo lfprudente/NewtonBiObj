@@ -1,0 +1,8 @@
+.DS_Store
+Manifest.toml
+
+# Generated experiment outputs (regenerate with scripts/run_experiments.jl)
+scripts/*.jld2
+scripts/*.csv
+scripts/*.pdf
+scripts/*.tex
