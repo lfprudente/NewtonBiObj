@@ -1,12 +1,10 @@
 """
     KKTResidual
 
-NOTE: this file must be `include`d from within the `NewtonBiObj` umbrella
-module (`src/NewtonBiObj.jl`), after `ScalarDualNewton` -- it refers to
-that sibling submodule via `..ScalarDualNewton` rather than including its
-own copy, to avoid the multiple-disconnected-module-instance issue that
-would otherwise break Revise tracking. It is not usable via a bare
-top-level `include("KKTResidual.jl")`.
+NOTE: must be `include`d from within the `NewtonBiObj` umbrella module,
+after `ScalarDualNewton` -- it refers to that sibling submodule via
+`..ScalarDualNewton` rather than including its own copy, and is not usable
+via a bare top-level `include("KKTResidual.jl")`.
 
 Solver-agnostic KKT residual for the primal epigraphic subproblem
 

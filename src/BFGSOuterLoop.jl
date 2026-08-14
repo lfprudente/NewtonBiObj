@@ -4,27 +4,17 @@
 Julia port of the BFGS-Wolfe algorithm for unconstrained multiobjective
 optimization (Prudente & Souza, "A quasi-Newton method with Wolfe line
 searches for multiobjective optimization", JOTA 194, 2022), from the
-reference Fortran implementation in `bfgsMOP/MOPsolverBFGS.f90` (see also
-`bfgsMOP/bfgs.f90`, `bfgsMOP/lsvecopt.f90`, `bfgsMOP/scalefactor.f90`).
+authors' reference Fortran implementation. Only the BFGS-Wolfe variant is
+ported (not the Standard-BFGS-Armijo/Wolfe variants), always assuming the
+standard Wolfe line-search type, which drops several branches present in
+the original for other configurations. The scalar Moré-Thuente sub-searches
+use `LineSearches.jl`'s `MoreThuente`.
 
-Ported here: only the BFGS-Wolfe variant (not the Standard-BFGS-Armijo/Wolfe
-variants in `MOPsolverStBFGS*.f90`). The vector Wolfe line search
-(`lsvecopt.f90`) is ported without its quadratic-function shortcut (dead
-code for this driver anyway: `MOPsolverBFGS.f90` hardcodes
-`quadratic(:) = .false.`, and `MyProblem.jl` has no `quadstep`), and always
-assuming the standard Wolfe line-search type (`LStype=1`, the only value
-`MOPsolverBFGS.f90` ever uses -- so `tolLS` is always `Inf`, which drops
-several branches of the original algorithm). The scalar Moré-Thuente
-sub-searches use `LineSearches.jl`'s `MoreThuente` instead of translating
-`morethuente.f`.
-
-The subproblem solve (`innersolver.f90`'s call to Algencan) is *not*
-ported -- it is the pluggable point of this whole exercise. `bfgs_mop`
-takes a `subproblem_solver` callback with signature
-`(g1,g2,B1,B2) -> (d, status)`, matching the existing `solve_dual`
+The subproblem solve is *not* ported -- it is the pluggable point of this
+module. `bfgs_mop` takes a `subproblem_solver` callback with signature
+`(g1,g2,B1,B2) -> (d, status)`, matching `solve_dual`
 (`ScalarDualNewton.jl`) and `solve_primal_socp`/`solve_primal_qcqp_raw`
-(`PrimalSOCP.jl`) already built for Families 2/3. Restricted to `m=2`
-(bi-objective) throughout, matching every subproblem solver available.
+(`PrimalSOCP.jl`). Restricted to `m=2` (bi-objective) throughout.
 """
 module BFGSOuterLoop
 
@@ -48,22 +38,18 @@ const PENALTY_PARAM = 1.0e10
 """
     make_penalized_eval(evalf_fn, evalg_fn!, l, u; penparam=1e10, penalize=true) -> (pf, pg!)
 
-Wraps `evalf_fn(ind,x)`/`evalg_fn!(g,ind,x)` with the cubic box-constraint
-penalty from `myproblem.f90`'s `penalizef`/`penalizeg` (μ = `penparam`):
+Wraps `evalf_fn(ind,x)`/`evalg_fn!(g,ind,x)` with a cubic box-constraint
+penalty (μ = `penparam`):
 
     f(x) += μ/3 * Σᵢ (max(0, xᵢ-uᵢ)³ + max(0, lᵢ-xᵢ)³)
     g(x) += μ   * Σᵢ (max(0, xᵢ-uᵢ)² - max(0, lᵢ-xᵢ)²)   (componentwise)
 
 The term is exactly zero while `x` is inside the box `[l,u]` and grows
-steeply outside it. `penalize` mirrors `myproblem.f90`'s per-problem
-`penalize` flag: when `false`, the cubic term is skipped entirely (matching
-the Fortran reference, which only applies this penalty to the subset of
-problems it flags `penalize=.true.`) -- see `PENALIZED_PROBLEMS` in
-`run_experiments.jl`. The `DomainError`/`ArgumentError` -> `sentinel`
-safety net (Julia's `sqrt`/`log`/etc. throw on invalid real input, unlike
-Fortran's silent NaN) is applied unconditionally either way, since a trial
-point can transiently leave the box during a line search regardless of
-whether that problem is penalized.
+steeply outside it; `penalize=false` skips it entirely (see
+`PENALIZED_PROBLEMS` in `run_experiments.jl`). A `DomainError`/
+`ArgumentError` -> `sentinel` safety net is applied regardless of
+`penalize`, since a trial point can transiently leave the box during a
+line search either way.
 """
 function make_penalized_eval(evalf_fn, evalg_fn!, l::Vector{Float64}, u::Vector{Float64};
                               penparam::Float64=PENALTY_PARAM, sentinel::Float64=1.0e100,
@@ -141,15 +127,9 @@ function bfgs_update!(B::Array{Float64,3}, x::Vector{Float64}, xprev::Vector{Flo
                        JF::Matrix{Float64}, JFprev::Matrix{Float64},
                        strconvex::AbstractVector{Bool}, theta::Float64)
     n, _, m = size(B)
-    # eps0 matches bfgs.f90's `eps` exactly (theta-scaled), and is used only
-    # for the curvature test below, same as the Fortran reference.
-    eps0 = 1.0e-6 * min(abs(theta), 1.0)
-    # Fixed, NOT theta-scaled: guards against sTBs/sTy/denom collapsing to
-    # (near) zero, which would silently poison B with NaN/Inf and propagate
-    # into every later iteration. Not part of the original Fortran (which
-    # has no such guard), added defensively. Using eps0 here instead would
-    # be wrong: eps0 -> 0 as theta -> 0, i.e. the guard would vanish exactly
-    # when iterates are closest to convergence and B is most senstive.
+    eps0 = 1.0e-6 * min(abs(theta), 1.0)   # theta-scaled, for the curvature test below
+    # Fixed (not theta-scaled): guards sTBs/sTy/denom against collapsing to
+    # zero near convergence, which would otherwise poison B with NaN/Inf.
     guard_eps = 1.0e-12
     s = x .- xprev
     Dxs = maximum(JF * s)
@@ -176,15 +156,14 @@ function bfgs_update!(B::Array{Float64,3}, x::Vector{Float64}, xprev::Vector{Flo
 end
 
 # =========================================================================
-# lsvecopt.f90 -- vector Wolfe line search (simplified: no quadratic
-# shortcut, LStype=1 fixed, so tolLS=Inf throughout)
+# Vector Wolfe line search (simplified: no quadratic shortcut, standard
+# Wolfe line-search type fixed throughout)
 # =========================================================================
 
 """
     wolfe_linesearch(evalphi, evalgphi, stp0, stpmin, stpmax, f0, g0, ftol, gtol;
                       maxoutiter=100) -> (stp, fend, nfev, ngev, info)
 
-Port of `lsvecopt.f90` (simplified as described in the module docstring).
 `evalphi(stp, ind) -> f`, `evalgphi(stp, ind) -> g` evaluate
 `φ_ind(stp) = f_ind(x+stp*d)` and its directional derivative. `f0[ind]`,
 `g0[ind]` are `φ_ind(0)`, `φ'_ind(0)`.
@@ -192,12 +171,7 @@ Port of `lsvecopt.f90` (simplified as described in the module docstring).
 `info`: `0` success (sufficient decrease + curvature satisfied), `1` step
 pinned at `stpmin`, `2` step pinned at `stpmax`, `3` rounding errors
 prevented progress, `5` maximum number of (outer) iterations reached, `-1`
-`d` is not a descent direction. (The Fortran reference `lsvecopt.f90`, via
-MINPACK-2's `dcsrch`, also has an `info=4` "bracket width below xtol" case,
-distinct from `info=3`'s "rounding errors" -- but `LineSearches.jl`'s
-`MoreThuente` doesn't expose that distinction in its `LineSearchException`,
-so this port can't reproduce it; every such case is reported as `info=3`
-here instead.)
+`d` is not a descent direction.
 """
 function wolfe_linesearch(evalphi, evalgphi, stp0::Float64, stpmin::Float64, stpmax::Float64,
                            f0::Vector{Float64}, g0::Vector{Float64},
@@ -267,12 +241,9 @@ function wolfe_linesearch(evalphi, evalgphi, stp0::Float64, stpmin::Float64, stp
             newstp, newf = ls(ϕdϕ, stp, f0[ind], maxg0)
             MTinfo = newstp == stpmax_work ? 2 : 0
         catch e
-            # LineSearches.MoreThuente can also throw a plain ArgumentError
-            # ("Minimizer not bracketed") from its internal `cstep` when the
-            # bracket degenerates numerically -- treated the same as the
-            # documented LineSearchException failure modes (rounding errors
-            # prevented further progress) rather than crashing the whole
-            # outer loop.
+            # A plain ArgumentError ("Minimizer not bracketed") from a
+            # degenerate bracket is treated the same as a
+            # LineSearchException, rather than crashing the outer loop.
             (e isa LineSearches.LineSearchException || e isa ArgumentError) || rethrow()
             if e isa LineSearches.LineSearchException
                 newstp = e.alpha
@@ -397,15 +368,16 @@ end
              maxoutiter=2000, epsopt=5√(2^-52), ftol=1e-4, gtol=1e-1,
              stpmin=1e-15, stpmax=1e10) -> (x, outiter, elapsed, nfev, ngev, theta, status)
 
-Port of `MOPsolverBFGS.f90`'s main loop, restricted to `m=2` (bi-objective).
-`evalf_fn(ind,x) -> f`, `evalg_fn!(g,ind,x)` evaluate the raw (unscaled)
-objective/gradient (e.g. `MyProblem.jl`'s `evalf`/`evalg!`, with `n` and the
-active `PROBLEM` already bound by the caller). `subproblem_solver(g1,g2,B1,B2)
--> (d,status)` is the pluggable subproblem solve -- see
-`subproblem_algorithm1`/`subproblem_primal_socp`/`subproblem_primal_qcqp`.
+The multiobjective BFGS-Wolfe outer loop, restricted to `m=2`
+(bi-objective). `evalf_fn(ind,x) -> f`, `evalg_fn!(g,ind,x)` evaluate the
+raw (unscaled) objective/gradient (e.g. `MyProblem.jl`'s `evalf`/`evalg!`,
+with `n` and the active `PROBLEM` already bound by the caller).
+`subproblem_solver(g1,g2,B1,B2) -> (d,status)` is the pluggable subproblem
+solve -- see `subproblem_algorithm1`/`subproblem_primal_socp`/
+`subproblem_primal_qcqp`.
 
 `status` is `:converged`, `:maxit`, `:subproblem_error`, or
-`:linesearch_error` (mirrors Fortran's `inform` 0/1/-1/2).
+`:linesearch_error`.
 """
 function bfgs_mop(n::Int, x0::Vector{Float64}, strconvex::AbstractVector{Bool}, scaleF::Bool,
                    evalf_fn, evalg_fn!;

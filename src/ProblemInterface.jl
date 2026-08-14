@@ -13,16 +13,12 @@ Two usage notes:
    defines these globals elsewhere, comment out the `const`/`global` block
    below and just make sure `MyProblem.jl` is included before this file.
 
-2. The analytical Hessians `evalh!` are the raw ∇²fⱼ(x). Since most of
-   these problems are nonconvex (`strconvex=false`), ∇²fⱼ(x) may be
-   indefinite at a generic point -- which violates the paper's Bⱼ ≻ 0
-   assumption. By default, we therefore regularize by eigenvalues
-   (Levenberg-Marquardt style): eigenvalues smaller than `eps_reg` are
-   replaced by `eps_reg`. This is the same practice used in
-   implementations of multiobjective Newton-type methods. Turn it off
-   with `regularize=false` if you want to guarantee by hand that the
-   point already satisfies Bⱼ ≻ 0 (e.g. by testing points close to a
-   local minimizer of fⱼ).
+2. The analytical Hessians `evalh!` are the raw ∇²fⱼ(x), which may be
+   indefinite at a generic point for the nonconvex problems in this
+   collection -- violating the paper's Bⱼ ≻ 0 assumption. By default, we
+   regularize by eigenvalues (Levenberg-Marquardt style): eigenvalues
+   smaller than `eps_reg` are replaced by `eps_reg`. Turn it off with
+   `regularize=false` if the point already satisfies Bⱼ ≻ 0.
 """
 module ProblemInterface
 

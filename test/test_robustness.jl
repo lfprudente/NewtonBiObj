@@ -1,21 +1,15 @@
 #!/usr/bin/env julia
 #
 # Robustness regression tests for ScalarDualNewton.jl. Complements
-# test_scalar_dual.jl (which checks the closed-form math: phi'=c1-c2, the
-# rho formula) with checks that solve_dual actually converges reliably,
-# consolidating ad hoc verification done while diagnosing two bugs:
+# test_scalar_dual.jl (which checks the closed-form math) with checks that
+# solve_dual actually converges reliably:
 #
-#   - A stall in the Armijo backtracking loop close to lambda*: once the
-#     Newton step becomes tiny enough, the sufficient-decrease test's
-#     required decrease underflows relative to phi(lambda^k)'s own
-#     floating-point resolution, so backtracking could "accept" a step
-#     that produces no representable change in lambda^k, freezing the
-#     outer loop until it hit `maxit`. Fixed by the stall safeguard in
-#     solve_dual. Test 1 below is the regression test: before the fix, a
-#     nontrivial fraction of instances hit `:maxit`.
-#   - Step 0 boundary handling on near-degenerate instances (B1≈B2,
-#     g1≈g2), which stress the degenerate case of Proposition
-#     "degenerate-case" in the paper. Test 2 below.
+#   - Test 1: a large random battery, checking that the Armijo stall
+#     safeguard prevents backtracking from freezing near lambda* until
+#     `maxit`.
+#   - Test 2: Step 0 boundary handling on near-degenerate instances
+#     (B1≈B2, g1≈g2), which stress the degenerate case of Proposition
+#     "degenerate-case" in the paper.
 #
 #   julia test_robustness.jl
 

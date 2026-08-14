@@ -44,21 +44,16 @@ is_success(status::AbstractString) =
 """
     build_performance_matrix(results, methods; problem_key) -> (T, methods)
 
-`results` is a long-format result vector (`Vector{<:NamedTuple}`, one row
-per `(problem, method)`, each row having `method`, `time`, `status`
-fields). `methods` is the ordered list of method names to include (matching
-the `method` field's values) -- also used as the profile's plot labels.
-`problem_key` maps a row to a hashable problem identifier (e.g.
-`r->(r.problem, r.start)` for the full-descent experiments,
-`r->(r.n,r.κ,r.rep)` for the scalability experiments).
+`results` is a long-format result vector (one row per `(problem, method)`,
+with `method`, `time`, `status` fields). `methods` is the ordered list of
+method names to include. `problem_key` maps a row to a hashable problem
+identifier (e.g. `r->(r.problem, r.start)` for the full-descent
+experiments, `r->(r.n,r.κ,r.rep)` for the scalability experiments).
 
-Returns `(T, methods)`, where `T` is the `(n_problems × n_methods)` matrix
-expected by `BenchmarkProfiles.performance_profile`: `T[p,s]` is the
-elapsed `time` of method `s` on problem `p` if that run's `status` counts
-as a success (`is_success`), and `NaN` otherwise (failure, or that
-method/problem combination missing from `results` entirely) -- `NaN`
-excludes it from ever "winning" a problem in the profile, per
-`BenchmarkProfiles`'s documented convention.
+Returns `(T, methods)`, where `T[p,s]` is the elapsed `time` of method `s`
+on problem `p` if that run succeeded (`is_success`), and `NaN` otherwise
+(failure, or that pair missing from `results`) -- the convention expected
+by `BenchmarkProfiles.performance_profile`.
 """
 function build_performance_matrix(results, methods::Vector{String}; problem_key)
     problems = unique(problem_key(r) for r in results)
@@ -111,13 +106,9 @@ end
 Builds and saves (via `savefig`) a Dolan-Moré performance profile comparing
 `methods` on `results` (long format -- see `build_performance_matrix`).
 
-If `verbose=true`, also prints the underlying ratio matrix to the console:
-each row (one per problem, identified via `problem_key`) is `T`'s row
-divided by its own minimum (so the winner on that problem always reads
-`1.000`), and rows are sorted by the *second*-smallest ratio in the row,
-ascending -- i.e. instances where the runner-up came closest to the winner
-are printed first. `NaN` (from a failed run, per `build_performance_matrix`)
-is skipped when computing each row's minimum/ordering and printed as `NaN`.
+If `verbose=true`, also prints the ratio-to-best matrix to the console
+(each row normalized by its own minimum, sorted by ascending
+second-smallest ratio, i.e. closest runner-up first).
 """
 function plot_pp(results, methods::Vector{String}, title::AbstractString, filename::AbstractString;
                   problem_key, xlim=nothing, verbose::Bool=true)
@@ -171,22 +162,14 @@ Loads a scalability-experiment results file (see `load_results`) and
 produces performance profiles: one over all instances
 (`scalability_profile_all.pdf`), plus one per distinct `κ` value present
 (`scalability_profile_kappa_<κ>.pdf`) -- separating the effect of
-conditioning from the effect of scale (`n`). Callable directly from the
-REPL, e.g.:
+conditioning from the effect of scale (`n`).
+
+`methods` controls which methods are plotted and the legend order.
+Defaults to `methods_present(results)` (`PREFERRED_METHOD_ORDER`). E.g.:
 
 ```julia
 using NewtonBiObj
 using .PerformanceProfiles
-scalability_performance_profiles("scalability_results.jld2")
-```
-
-`methods` controls both which methods are plotted and the order of the
-curves/legend (the legend lists entries in exactly the order they're drawn,
-i.e. the order of this vector -- see `BenchmarkProfiles.performance_profile`).
-Defaults to `methods_present(results)` (`PREFERRED_METHOD_ORDER`). Pass an
-explicit vector to reorder or subset it, e.g.:
-
-```julia
 scalability_performance_profiles("scalability_results.jld2"; methods=["Algorithm1", "Mosek", "IPOPT", "Gurobi", "Clarabel"])
 ```
 """
@@ -221,22 +204,9 @@ end
 
 Loads a full-descent-experiment results file (see `load_results`) and
 produces a Dolan-Moré performance profile of *total* outer-loop wall-clock
-time (`run_full_descent_experiments`'s `bfgs_mop` calls, not an isolated
-subproblem solve), one curve per subproblem solver, matched 1-1 per
-`(problem, start)` instance -- i.e. for each real test problem and each of
-its random starting points, every method ran the *same* BFGS-Wolfe outer
-loop from the *same* starting point, only the subproblem solver differs.
-`is_success` already recognizes these results' `status` values without
-changes (`:converged` is in `GOOD_ALGORITHM1_STATUSES`;
-`:maxit`/`:subproblem_error`/`:linesearch_error`/`:crashed` are not, so
-they count as failures in the profile, same convention as everywhere
-else). Callable directly from the REPL, e.g.:
-
-```julia
-using NewtonBiObj
-using .PerformanceProfiles
-full_descent_performance_profiles("full_descent_results.jld2")
-```
+time, one curve per subproblem solver, matched 1-1 per `(problem, start)`
+instance: every method ran the same BFGS-Wolfe outer loop from the same
+starting point, only the subproblem solver differs.
 """
 function full_descent_performance_profiles(path::AbstractString; outdir::AbstractString=dirname(path),
                                        methods::Union{Nothing,Vector{String}}=nothing)
@@ -261,12 +231,9 @@ end
 
 Builds and saves a log-log plot of median solve time vs. `n`, one line per
 method, for a fixed `κ` subset of scalability-experiment results.
-Complements the performance profiles (`plot_pp`): a profile only shows
-relative ranking across all instances, not the actual growth rate with
-`n`, which is the central claim of the paper (Algorithm 1 avoids the
-primal reformulation's O(n³) cost). Only successful runs (`is_success`)
-contribute to each median; a method with no successful runs at a given `n`
-is simply not plotted there.
+Complements the performance profiles (`plot_pp`), which show relative
+ranking but not the growth rate with `n`. Only successful runs
+(`is_success`) contribute to each median.
 """
 function scalability_scaling_plot(results, methods::Vector{String}, κ, filename::AbstractString;
                                title::Union{Nothing,AbstractString}=nothing)
@@ -322,13 +289,9 @@ function scalability_scaling_profiles(path::AbstractString; outdir::AbstractStri
 end
 
 # Formats x as "m × 10^e" LaTeX scientific notation, except for e ∈ {0,1,2}
-# (i.e. 1 ≤ |x| < 1000), where the "× 10^e" adds no information (e=0) or is
-# just as readable spelled out as a plain 2- or 3-digit number (e=1,2) --
-# printed as plain decimal instead, rounded to keep the same number of
-# significant digits as the scientific form would. `force_sci=true`
-# disables this and always uses scientific form, for axis-style labels (τ,
-# κ) that are conventionally shown as powers of ten regardless of
-# magnitude.
+# (1 ≤ |x| < 1000), printed as a plain decimal instead since scientific
+# notation adds no readability there. `force_sci=true` always uses
+# scientific form, for axis-style labels (τ, κ) shown as powers of ten.
 function _latex_sci(x::Real; digits::Int=1, force_sci::Bool=false)
     x == 0 && return "0"
     e = floor(Int, log10(abs(x)))
@@ -379,14 +342,9 @@ end
     scalability_table_by_n(path; methods=nothing, outfile=nothing) -> String
 
 Loads a scalability-experiment results file and builds an "n × method"
-table of median CPU time, one row per problem dimension `n`, aggregating
-over every `κ` and `rep` present (i.e. the median is taken over
-`length(κs)*nrep` runs per cell). Aggregating over `κ` is reasonable here
-because conditioning barely affects absolute time (confirmed directly on
-the data -- e.g. Clarabel at `n=4000` ranges only 327s-388s across all
-four `κ` values), so this table isolates the dimension-scaling trend that
-is this section's main point, without the table growing to one row per
-`(n,κ)` pair.
+table of median CPU time, one row per `n`, aggregating over every `κ` and
+`rep` present -- reasonable since conditioning barely affects absolute
+time, so this isolates the dimension-scaling trend.
 
 Prints a plain-text version to the console and returns a LaTeX `tabular`
 string; also writes it to `outfile` (default: `scalability_table_by_n.tex`
@@ -414,12 +372,9 @@ end
     scalability_table_by_kappa(path; n=4000, methods=nothing, outfile=nothing) -> String
 
 Loads a scalability-experiment results file and builds a "κ × method"
-table of median CPU time at a single, fixed `n` (default the largest in
-the grid, `4000`, where differences between methods are most pronounced),
-one row per condition number `κ` (median over `rep` only -- no aggregation
-over `n`, unlike `scalability_table_by_n`, since `n` spans more than two
-orders of magnitude and a time median mixing those scales would not be
-meaningful).
+table of median CPU time at a single, fixed `n` (default `4000`, the
+largest in the grid), one row per condition number `κ` (median over `rep`
+only -- unlike `scalability_table_by_n`, no aggregation over `n`).
 
 Prints a plain-text version to the console and returns a LaTeX `tabular`
 string; also writes it to `outfile` (default:
@@ -452,13 +407,11 @@ end
     degenerate_robustness_table(path; n=1000, methods=nothing, outfile=nothing) -> String
 
 Loads a degenerate-robustness-experiment results file and builds a
-"methods × τ" table for a single `n` -- restricting to one `n` keeps the
-table small enough for the paper, since the interesting axis here is
+"methods × τ" table for a single `n`, since the interesting axis here is
 degeneracy depth (`τ`), not scale. Rows are `τ` (decreasing, i.e.
-increasingly degenerate), columns are each method's median time across
-`rep`s, plus the maximum `err_d`/`err_obj` observed among the primal
-solvers at that `τ` (Algorithm 1 itself has `err_d=err_obj=0` by
-construction -- it's the reference solution -- so it's excluded from the
+increasingly degenerate); columns are each method's median time across
+`rep`s, plus the maximum `err_d`/`err_obj` among the primal solvers at
+that `τ` (Algorithm 1 is the reference solution, so excluded from the
 error columns).
 
 Prints a plain-text version to the console and returns a LaTeX `tabular`

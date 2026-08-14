@@ -1,8 +1,7 @@
 #!/usr/bin/env julia
 #
-# Regression / validation tests for KKTResidual.jl, consolidating the ad hoc
-# verification done while designing the solver-agnostic KKT residual used to
-# compare Algorithm 1 against primal SOCP/QCQP competitors
+# Validation tests for KKTResidual.jl, the solver-agnostic KKT residual
+# used to compare Algorithm 1 against primal SOCP/QCQP competitors
 # (Clarabel/Mosek/Gurobi/Ipopt) under a common accuracy standard.
 #
 #   julia test_kkt_residual.jl
@@ -188,15 +187,10 @@ end
 """
     test_ipopt_solve(; verbose) -> Bool
 
-Same as `test_clarabel_solve`, but via Ipopt, a general NLP solver, not a
-conic one -- it doesn't accept the RotatedSecondOrderCone constraint
-`solve_primal_socp` builds, so this goes through `solve_primal_qcqp_raw`
-(raw quadratic constraint) instead. Ipopt also reports success as
-`MOI.LOCALLY_SOLVED`, not `MOI.OPTIMAL` (the status conic solvers use), so
-the "trust this point" check differs from the other `test_*_solve`
-functions above (an earlier version of `solve_primal_qcqp_raw` wrongly
-excluded `LOCALLY_SOLVED`, silently discarding genuinely good points as
-NaN).
+Same as `test_clarabel_solve`, but via Ipopt, a general NLP solver: it
+doesn't accept the RotatedSecondOrderCone constraint `solve_primal_socp`
+builds, so this goes through `solve_primal_qcqp_raw` instead, and reports
+success as `MOI.LOCALLY_SOLVED` rather than `MOI.OPTIMAL`.
 """
 function test_ipopt_solve(; verbose::Bool=true)
     rng = MersenneTwister(3)
