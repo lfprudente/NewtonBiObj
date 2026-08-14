@@ -16,17 +16,26 @@ experiments.
 
 ## Installation
 
-```julia
-using Pkg
-Pkg.develop(path="path/to/NewtonBiObj")   # or Pkg.add(url="...")
-Pkg.instantiate()
+```bash
+git clone https://github.com/lfprudente/NewtonBiObj.git
+cd NewtonBiObj
+julia --project=. -e 'using Pkg; Pkg.instantiate()'
 ```
+
+`--project=.` activates this repository's own environment (`Project.toml`)
+for the session; no separate `Pkg.activate()` call is needed as long as
+every subsequent `julia` command also uses `--project=.`, as in the
+examples below.
 
 Some of the primal competitors require a commercial solver license
 (Mosek, Gurobi); those Julia packages are still listed as dependencies (so
 `Pkg.instantiate()` installs them), but a license is only needed to
 actually call the corresponding solver. The package works with just
 Clarabel and Ipopt (both open source) if no such license is available.
+
+To use this package as a dependency of another project instead, run
+`Pkg.develop(path="path/to/NewtonBiObj")` (or `Pkg.add(url="...")`) from
+that project's own activated environment.
 
 ## Package structure
 
@@ -81,7 +90,6 @@ res.status   # :converged, :endpoint0, :endpoint1, or :maxit
 ## Reproducing the paper's experiments
 
 ```bash
-julia --project=. -e 'using Pkg; Pkg.instantiate()'   # first time only
 julia --project=. scripts/run_experiments.jl
 ```
 
